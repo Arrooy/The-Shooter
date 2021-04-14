@@ -1,5 +1,5 @@
 [package]
-name = "TheShooter"
+name = "the_shooter"
 version = "0.1.0"
 authors = ["arroyo"]
 edition = "2018"
