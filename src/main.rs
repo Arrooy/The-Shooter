@@ -1,5 +1,7 @@
 use std::fs;
 use std::env;
+use std::borrow::Borrow;
+use std::fmt::Display;
 
 const RESOURCES_PATH: &str = "./res/";
 
@@ -12,21 +14,11 @@ Per buscar un fitxer prova: cargo run /find vol_name file_name.txt";
 const ERROR_OPTION_NOT_FOUND: &str = "Opcio no reconeguda! Opcions reconegudes són /info /find /delete";
 
 
-struct Volume<'a> {
-    data: Vec<u8>,
-    file_name: &'a str,
-}
-
 trait Filesystem{
-    fn new(volume_name: &'static str, file_name: &'static str) -> Volume<'static> {
-        Volume {
-            data: fs::read(format!("{}{}", RESOURCES_PATH, volume_name)).expect(format!("{}{}",ERROR_VOLUME_NOT_FOUND, volume_name).as_str()),
-            file_name
-        }
-    }
+    fn new(volume_name: String, file_name: Option<String>) -> Self;
 
-    fn process_operation(&self, operation: &'static str) {
-        match operation {
+    fn process_operation(&self, operation: String) {
+        match operation.as_str() {
             "/info" => self.info(),
             "/find" => todo!(),
             "/delete" => todo!(),
@@ -39,9 +31,18 @@ trait Filesystem{
     fn delete(&self, file_name: &'static str);
 }
 
-struct FAT16<'a>(Volume<'a>);
+struct Volume{
+    data: Vec<u8>,
+    file_name: Option<String>,
+}
 
-impl Filesystem for FAT16<'_>{
+impl Filesystem for Volume{
+    fn new(volume_name: String, file_name: Option<String>) -> Self {
+        Self {
+            data: fs::read(format!("{}{}", RESOURCES_PATH, volume_name)).expect(format!("{}{}",ERROR_VOLUME_NOT_FOUND, volume_name).as_str()),
+            file_name
+        }
+    }
 
     fn info(&self){
 
@@ -50,33 +51,19 @@ impl Filesystem for FAT16<'_>{
     fn find(&self, file_name: &'static str) {
         todo!()
     }
-
     fn delete(&self, file_name: &'static str) {
         todo!()
     }
 }
 
-struct EX2<'a>(Volume<'a>);
-impl EX2 <'_>{
-
-}
-
 fn main() {
-    // Process the program arguments
-    let args: Vec<String> = env::args().collect();
+    // Extract the program arguments
+    let operation = env::args().nth(1).expect("");
+    let volume_name = env::args().nth(2).expect("");
+    let file_name = env::args().nth(3);
 
-    let filesystem;
+     // Create a new FileSystem
+    let filesystem= Volume::new(volume_name, file_name);
 
-    match args.len() {
-        // Volem fer info
-        3 => filesystem = FAT16::new(args[2].as_str(), ""),
-        // Volem fer funcionalitats amb fitxers
-        4 => filesystem = FAT16::new(args[2].as_str(), args[3].as_str()),
-        _ => {
-            print!("{}",ERROR_NUM_ARGS);
-            return;
-        },
-    }
-
-    filesystem.process_operation(args[1].as_str())
+    filesystem.process_operation(operation)
 }
