@@ -6,6 +6,15 @@ use std::fs::File;
 use std::str;
 use std::str::Utf8Error;
 
+/*
+    Fat analysis
+    fatcat -i Fat16_1024
+
+    Ex2 analysis
+    dumpe2fs -h Ext2
+
+*/
+
 const RESOURCES_PATH: &str = "./res/";
 
 const ERROR_VOLUME_NOT_FOUND: &str = "Error! No s'ha trobat el volum";
@@ -53,11 +62,13 @@ fn extract_string(data: &[u8], base: usize, offset: usize) -> Result<&str, Utf8E
 
 fn extract_u16(data: &[u8], base: usize, offset: usize) -> u16 {
     let vec = &data[base..base + offset];
+    println!("Extracting [{}..{}] is {:?}", base, offset, vec);
     ((vec[0] as u16) << 8) | vec[1] as u16
 }
 
 fn extract_u32(data: &[u8], base: usize, offset: usize) -> u32 {
     let vec = &data[base..base + offset];
+    println!("Extracting [{}..{}] is {:?}", base, offset, vec);
     ((vec[0] as u32) << 24) | ((vec[1] as u32) << 16) | ((vec[2] as u32) << 8) | (vec[3] as u32)
 }
 
@@ -80,34 +91,38 @@ trait Filesystem {
 
 struct FAT16 {
     file_name: Option<String>,
-    bpb_byts_per_sec: u16,
-    bpb_sec_per_clus: u8,
-    bpb_rsvd_sec_cnt: u16,
-    bpb_num_fats: u8,
-    bpb_root_ent_cnt: u16,
-    bpb_tot_sec16: u16,
-    // Un dels dos ha de ser non zero!
-    bpb_tot_sec32: u32,
-    // Un dels dos ha de ser non zero!
+    bytes_per_sector: u16,
+    num_sec_per_alloc: u8,
+    num_rsvd_sec: u16,
+    num_fats: u8,
+    num_root_dir: u16,
+    num_total_sec: u32,
     bs_vol_lab: String,
-    bs_oemname: String,
+    oem_name: String,
     data: Vec<u8>,
 }
 
 impl Filesystem for FAT16 {
     fn new(gv: GenericVolume) -> Self {
+        let num_total_sec: u32;
+
+        // Mirem si el nombre de sectors de 32 bits esta buit. Sino el fem servir.
+        if extract_u32(&gv.data, 32, 4) == 0 {
+            num_total_sec = extract_u16(&gv.data, 19, 2) as u32;
+        } else {
+            num_total_sec = extract_u32(&gv.data, 32, 4);
+        }
+
         FAT16 {
             file_name: gv.file_name,
-
-            bpb_byts_per_sec: extract_u16(&gv.data, 11, 2),
-            bpb_sec_per_clus: gv.data[13],
-            bpb_rsvd_sec_cnt: extract_u16(&gv.data, 14, 2),
-            bpb_num_fats: gv.data[16],
-            bpb_root_ent_cnt: extract_u16(&gv.data, 17, 2),
-            bpb_tot_sec16: extract_u16(&gv.data, 19, 2),
-            bpb_tot_sec32: extract_u32(&gv.data, 32, 4),
-            bs_vol_lab: extract_string(&gv.data, 54, 8).unwrap().parse().unwrap(),
-            bs_oemname: extract_string(&gv.data, 3, 8).unwrap().parse().unwrap(),
+            bytes_per_sector: extract_u16(&gv.data, 11, 2),
+            num_sec_per_alloc: gv.data[13],
+            num_rsvd_sec: extract_u16(&gv.data, 14, 2),
+            num_fats: gv.data[16],
+            num_root_dir: extract_u16(&gv.data, 17, 2),
+            num_total_sec,
+            bs_vol_lab: extract_string(&gv.data, 43, 11).unwrap().parse().unwrap(),
+            oem_name: extract_string(&gv.data, 3, 8).unwrap().parse().unwrap(),
             data: gv.data,
         }
     }
@@ -119,21 +134,18 @@ System Name: {}
 Mida del sector: {}
 Sectors Per Cluster: {}
 Sectors reservats: {}
-Número de FATs (16): {}
-Número de FATs (32): {}
+Número de FATs): {}
 MaxRootEntries: {}
 Sectors per FAT: {}
 Label: {}",
-            //TODO: REORDENAR!
                INFO_HEADER,
-               self.bs_oemname,
-               self.bpb_byts_per_sec,
-               self.bpb_sec_per_clus,
-               self.bpb_rsvd_sec_cnt,
-               self.bpb_num_fats,
-               self.bpb_root_ent_cnt,
-               self.bpb_tot_sec16,
-               self.bpb_tot_sec32,
+               self.oem_name,
+               self.bytes_per_sector,
+               self.num_sec_per_alloc,
+               self.num_rsvd_sec,
+               self.num_fats,
+               self.num_root_dir,
+               self.num_total_sec,
                self.bs_vol_lab)
     }
 
