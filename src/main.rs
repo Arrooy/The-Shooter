@@ -15,6 +15,8 @@ use std::str::Utf8Error;
 
 */
 
+// TODO: FAT16 no concorda el camp SectorsxFAT
+
 const RESOURCES_PATH: &str = "./res/";
 
 const ERROR_VOLUME_NOT_FOUND: &str = "Error! No s'ha trobat el volum";
@@ -63,13 +65,13 @@ fn extract_string(data: &[u8], base: usize, offset: usize) -> Result<&str, Utf8E
 fn extract_u16(data: &[u8], base: usize, offset: usize) -> u16 {
     let vec = &data[base..base + offset];
     println!("Extracting [{}..{}] is {:?}", base, offset, vec);
-    ((vec[0] as u16) << 8) | vec[1] as u16
+    ((vec[1] as u16) << 8) | vec[0] as u16
 }
 
 fn extract_u32(data: &[u8], base: usize, offset: usize) -> u32 {
     let vec = &data[base..base + offset];
     println!("Extracting [{}..{}] is {:?}", base, offset, vec);
-    ((vec[0] as u32) << 24) | ((vec[1] as u32) << 16) | ((vec[2] as u32) << 8) | (vec[3] as u32)
+    ((vec[3] as u32) << 24) | ((vec[2] as u32) << 16) | ((vec[1] as u32) << 8) | (vec[0] as u32)
 }
 
 trait Filesystem {
@@ -134,7 +136,7 @@ System Name: {}
 Mida del sector: {}
 Sectors Per Cluster: {}
 Sectors reservats: {}
-Número de FATs): {}
+Número de FATs: {}
 MaxRootEntries: {}
 Sectors per FAT: {}
 Label: {}",
