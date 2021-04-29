@@ -170,6 +170,55 @@ impl FAT16{
         print!("Fat offset is {}", fat_ent_offset);
         12
     }
+    // Cerca un directori per trobar query_filename. Al trobar una carpeta, torna a executar la cerca a l'interior.
+    // Basicament és un DFS.
+    fn find_in_dir(&self, start: u32, end: u32, query_filename: &String ) -> u32{
+
+        let mut i :u32 = start;
+        while i < end || end == 0 {
+            let directory = &self.data[i as usize..(i+32) as usize];
+
+            // No hi ha info en aquest bloc. Anem al seguent
+            if directory[0] == 0xE5 {
+                i += 32;
+                continue;
+            }
+
+            // No hi ha info en el bloc ni en en el seguents
+            if directory[0] == 0x00 {
+                break;
+            }
+
+            // Hem trobat un directori!
+            let nom = extract_string(directory, 0, 8);
+            let extension = extract_string(directory, 8, 3);
+            let filename = (nom.unwrap().replace(" ","") + "." + extension.unwrap()).to_lowercase();
+            let attr = directory[11];
+
+            let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
+            let file_size = extract_u32(directory,28);
+
+            if *query_filename == filename {
+                return file_size;
+            }
+
+            // Directori es un subdirectori! Podem buscar a l'interior. Sempre i quan no sigui . o ..
+            if attr == 0x10 && directory[0] != 0x2e {
+                // println!("El directori era una carpeta. Entrant a l'interior de la carpeta {}", filename);
+                let first_sector_of_cluster = ((cluster_numbers - 2) as u32 * self.bpb_sec_per_clus as u32) + self.first_data_sector as u32;
+                let new_dir_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
+
+                let res = self.find_in_dir(new_dir_start,0,query_filename);
+                if res != 0{
+                    return res;
+                }
+            }
+
+            i += 32;
+        }
+
+        return 0;
+    }
 }
 
 impl Filesystem for FAT16 {
@@ -185,7 +234,6 @@ impl Filesystem for FAT16 {
         let root_dir_sectors = ((bpb_root_ent_cnt * 32) + (bpb_byts_per_sec - 1)) / bpb_byts_per_sec;
         // Start of data sector
         let first_data_sector = num_rsvd_sec as u32 + (bpb_num_fats as u32 * bpb_fatsz16 as u32) + root_dir_sectors as u32;
-
 
         let bpb_tot_sec16 =  extract_u16(&gv.data, 19);
 
@@ -238,8 +286,6 @@ Label: {}",
                      self.bpb_root_ent_cnt,
                      self.bpb_fatsz16,
                      self.bs_vol_lab)
-
-
     }
 
     fn find(&self) {
@@ -249,59 +295,21 @@ Label: {}",
         }
 
         let query_filename = self.file_name.as_ref().unwrap();
-
         match self.get_fat_type() {
             FatType::FAT12 => panic!("Filesystem must be FAT16. FAT12 found instead!"),
             FatType::FAT16 => (),
             FatType::FAT32 => println!("Filesystem must be FAT16. FAT32 found instead!"),
         }
 
-        let first_root_dir_sec_num = self.num_rsvd_sec as u32 + ( self.bpb_num_fats as u32 * self.bpb_fatsz16 as u32);
+        let first_root_dir_sec_num = self.num_rsvd_sec as u32 + (self.bpb_num_fats as u32 * self.bpb_fatsz16 as u32);
         let first_root_dir_start = first_root_dir_sec_num * self.bpb_byts_per_sec as u32;
         let first_root_dir_end = (self.root_dir_sectors as u32 * self.bpb_byts_per_sec as u32) + first_root_dir_start;
 
-        let mut i :u32 = first_root_dir_start;
-        let mut found:bool = false;
-
-        while i < first_root_dir_end {
-            let directory = &self.data[i as usize..(i+32) as usize];
-
-            // No hi ha info en aquest bloc. Anem al seguent
-            if directory[0] == 0xE5 {
-                i += 32;
-                continue;
-            }
-
-            // No hi ha info en el bloc ni en en el seguents
-            if directory[0] == 0x00 {
-                break;
-            }
-
-            // Hem trobat un directori!
-            let nom = extract_string(directory, 0, 8);
-            let extension = extract_string(directory, 8, 3);
-            let filename = (nom.unwrap().replace(" ","") + "." + extension.unwrap()).to_lowercase();
-            let attr = directory[11];
-
-            /* Check nom llarg.
-            if attr == 0xf{
-                print!("El nom es LONG NAME!")
-            }
-             */
-
-            let cluster_numbers = (directory[26] as u16) << 8 | (directory[27] as u16);
-            let file_size = extract_u32(directory,28);
-
-            if *query_filename == filename {
-                println!("Fitxer trobat! Ocupa {} bytes.", file_size);
-                found = true;
-                break;
-            }
-            //println!("Info found:\n {:?} -- {:?} {:?} {:#04x} {:?} {:?}", filename, nom , extension, attr, cluster_numbers, file_size);
-            i += 32;
-        }
-        if !found {
-            println!("Error. Fitxer no trobat.")
+        let size = self.find_in_dir(first_root_dir_start,first_root_dir_end,query_filename);
+        if size != 0 {
+            println!("Fitxer trobat! Ocupa {} bytes.", size);
+        }else{
+            println!("Error. Fitxer no trobat.");
         }
     }
 
