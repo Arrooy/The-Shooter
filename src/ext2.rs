@@ -30,7 +30,7 @@ pub(crate) struct Ext2 {
 impl Ext2 {
 
     // Block number == 1 -> Superblock.
-    fn getOffset(&self, block_number: u32) -> u32 {
+    fn get_offset(&self, block_number: u32) -> u32 {
         return 1024 + (block_number - 1) * self.block_size;
     }
 
@@ -115,7 +115,7 @@ Ultima escriptura: {}", INFO_HEADER,
         let block_group_count = 1 + (self.block_count - 1) / self.group_blocks_count;
 
         //Offset del primer bloc.
-        let gr_desc_start_off = self.getOffset(1 + self.first_block);
+        let gr_desc_start_off = self.get_offset(1 + self.first_block);
 
         //Offset del final del block group description table
         let gr_desc_end_off = gr_desc_start_off + block_group_count * 32;
@@ -125,29 +125,44 @@ Ultima escriptura: {}", INFO_HEADER,
         let inodes_per_block = self.block_size / self.inode_size as u32;
         let inode_blocks_per_group = self.inodes_x_group / inodes_per_block;
 
-        let mut inode_num = 1 + self.first_inode;
+        //TODO: S'indica que s'han de saltar les primeres 11 entries de la taula. Aixo que comporta? pag 17.
+        let mut inode_num = 1;//+ self.first_inode;
         let bg_inode_table = extract_u32(&self.data,(gr_desc_start_off + 8) as usize);
 
         while inode_num < self.inodes_x_group {
-            let in_table_start_off = (self.getOffset(bg_inode_table) + (inode_num - 1) * self.inode_size as u32) as usize;
+            let in_table_start_off = (self.get_offset(bg_inode_table) + (inode_num - 1) * self.inode_size as u32) as usize;
+
+
             let i_mode = extract_u16(&self.data,in_table_start_off);
 
             // TODO: Preguntar que fer amb els inodes que donen 0...
             let i_links_count = extract_u16(&self.data, in_table_start_off + 26);
             if i_mode != 0 && i_links_count > 0 {
 
+                // TODO: Max_i_blocks dona 79... perque?
                 let max_i_blocks = extract_u32(&self.data, in_table_start_off + 28) / (2 << extract_u32(&self.data, 1024 + 24));
-                if (i_mode & 0x4000) == 0x4000 {
-                    println!("El inode és un directori!");
-                }else {
 
-                }
                 // Aixo 15 vegades. i_block_0 apunta a
                 let i_block_0 = extract_u32(&self.data, in_table_start_off + 40);
+                println!("Scanning inode num {:?}. Offset from start of the table is {:x}. Format is {:x} Its size is {:?} bytes. Its max_i_blocks is {:?}",inode_num, in_table_start_off, i_mode, extract_u32(&self.data,in_table_start_off + 4), max_i_blocks);
 
-                println!("I block is {} - {}", i_block_0,i_block_1);
-                println!("Scanning inode.Start of the table is {:x}. Format is {:x} Its size is {:?}. Its i_blocks is {:?}",in_table_start_off, i_mode, extract_u32(&self.data,in_table_start_off + 4), max_i_blocks);
+                if (i_mode & 0x4000) == 0x4000 {
+                    println!("\tEl inode és un directori!");
+                    // Analitzem el directori:
+                    let add = (i_block_0 * self.block_size as u32)as usize;
+                    let inode = extract_u32(&self.data, add);
+                    let name_len = &self.data[add + 6];
+                    let rec_len = extract_u16(&self.data,add + 4);
 
+                    // TODO: He de buscar amb rec_len fins a trobar un dir amb EXT2_FT_UNKNOWN?
+
+                    let file_type = &self.data[add + 7];
+                    let file_name = extract_string(&self.data,add + 8,*name_len as usize);
+                    println!("\tDir data is: File name is {:?}. Name len is {:?}. Inode number is {:?}. FileType {:?}. Rec len is {:?}", file_name.unwrap(),name_len, inode, file_type,rec_len);
+                    println!("Next name is {:?}", extract_string(&self.data,(add + 8 + rec_len as usize) as usize,self.data[(add + rec_len as usize + 6)as usize] as usize).unwrap())
+                }else {
+                    //TODO: Ignoro els fitxers que no siguin dir?
+                }
             }
             inode_num += 1;
         }
