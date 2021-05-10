@@ -1,9 +1,8 @@
 use crate::generics::*;
 use crate::utils::*;
-use std::borrow::Borrow;
 
 pub(crate) struct Ext2 {
-    file_name: Option<String>,
+    file_name: String,
     data: Vec<u8>,
 
     inode_size: u16,
@@ -28,7 +27,6 @@ pub(crate) struct Ext2 {
 }
 
 impl Ext2 {
-
     // Block number == 1 -> Superblock.
     fn get_offset(&self, block_number: u32) -> u32 {
         return 1024 + (block_number - 1) * self.block_size;
@@ -36,28 +34,27 @@ impl Ext2 {
 
     // Cerca un fitxer de forma recursiva, retorna el Some(size). Si no troba. retorna None.
     fn find_in_inode(&self, inode_nun: u32, filename: &String) -> Option<u32> {
-
         let block_group_num = (inode_nun - 1) / self.inodes_x_group;
 
         let block_group_offset = block_group_num * self.group_blocks_count * self.block_size;
 
         // Proporciona el blockd e la taula d'inodes del primer block group.
-        let bg_inode_table = extract_u32(&self.data,(self.get_offset(1 + self.first_block + block_group_num * self.group_blocks_count) + 8) as usize);
+        let bg_inode_table = extract_u32(&self.data, (self.get_offset(1 + self.first_block + block_group_num * self.group_blocks_count) + 8) as usize);
 
         let inode_nun = (inode_nun - 1) % self.inodes_x_group;
 
         // Donat un inode_num proporciona el offset a la seva posició.
         let offset = (block_group_offset + self.get_offset(bg_inode_table) + inode_nun * self.inode_size as u32) as usize;
 
-        let i_mode = extract_u16(&self.data,offset);
-        if  (i_mode & 0x4000) == 0x4000 {
+        let i_mode = extract_u16(&self.data, offset);
+        if (i_mode & 0x4000) == 0x4000 {
 
             // El inode_num correspon a un directori.
             let max_i_blocks = extract_u32(&self.data, offset + 28) / (2 << extract_u32(&self.data, 1024 + 24));
 
             assert!(max_i_blocks <= 15);
 
-            for i in 1..=max_i_blocks{
+            for i in 1..=max_i_blocks {
                 let data_block_num = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize);
                 let data_block_offset = data_block_num * self.block_size;
                 if i < 13 {
@@ -67,22 +64,19 @@ impl Ext2 {
                     if file_size.is_some() {
                         return file_size;
                     }
-
-                }else if i == 13 {
+                } else if i == 13 {
                     // Indirect block
                     todo!()
-                }else if i == 14{
+                } else if i == 14 {
                     // Double indirect block
                     todo!()
-                }else {
+                } else {
                     // Triple indirect block
                     todo!()
                 }
             }
-
-
-        }else{
-            let size = extract_u32(&self.data,offset + 4);
+        } else {
+            let size = extract_u32(&self.data, offset + 4);
             return Some(size);
         }
         None
@@ -93,38 +87,37 @@ impl Ext2 {
         let mut i: usize = 0;
         // Do while suuper apurat.
         while {
-
             let goal_inode = extract_u32(&self.data, data_block_offset as usize + i);
 
             let name_len = &self.data[data_block_offset as usize + 6 + i];
-            let found_filename = extract_string(&self.data,data_block_offset as usize + 8 + i,*name_len as usize).unwrap();
+            let found_filename = extract_string(&self.data, data_block_offset as usize + 8 + i, *name_len as usize).unwrap();
             let file_type = self.data[data_block_offset as usize + 7 + i];
 
             let rec_len = extract_u16(&self.data, data_block_offset as usize + 4 + i);
 
             // Si la entry no es fa servir + no hi ha seguent. Sortim de la recusio.
             if goal_inode == 0 && rec_len == 0 {
-                return None
+                return None;
             }
 
             // Check filetype:
             if file_type != 2 {
                 // Not a dir. Check filename!
                 if file_type != 0 {
-                    if filename == found_filename{
+                    if filename == found_filename {
                         let size = self.find_in_inode(goal_inode, filename);
-                        if size.is_some(){
-                            return size
+                        if size.is_some() {
+                            return size;
                         }
                     }
                 }
-            }else{
+            } else {
                 // Is a directory. Recursive call.
 
                 //Evitem analitzar . i ..
                 if found_filename == "." || found_filename == ".." {
                     // println!("Not analizing dir search because its me! Filename is {} Reclen is {}",found_filename,rec_len);
-                }else{
+                } else {
                     // println!("Analizing a inode {} that is a dir!! Dirname is {} filetype is {}",goal_inode, found_filename,file_type);
                     let size = self.find_in_inode(goal_inode, filename);
                     if size.is_some() {
@@ -216,12 +209,12 @@ Ultima escriptura: {}", INFO_HEADER,
     fn find(&self) {
 
         // Iniciem la cerca per el inode Root.
-        let found_size = self.find_in_inode(2, self.file_name.as_ref().unwrap());
+        let found_size = self.find_in_inode(2, &self.file_name);
 
-        if found_size.is_some(){
-            println!("File found. Its size is {:?}", found_size.unwrap());
-        }else{
-            println!("File not found!");
+        if found_size.is_some() {
+            println!("{}{} bytes.", FILE_FOUND, found_size.unwrap());
+        } else {
+            println!("{}", FILE_NOT_FOUND);
         }
     }
     fn delete(&self) {

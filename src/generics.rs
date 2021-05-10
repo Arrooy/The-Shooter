@@ -1,30 +1,48 @@
 use std::fs;
+use std::process::exit;
 
 use crate::utils::extract_string;
 
 pub(crate) const RESOURCES_PATH: &str = "./res/";
 
-pub(crate) const ERROR_VOLUME_NOT_FOUND: &str = "Error. Volum inexistent";
+pub(crate) const INFO_HEADER: &str = "------ Filesystem Information ------";
 
-pub(crate) const ERROR_NUM_ARGS: &str = "Error amb el nombre d'arguments. El programa espera 2 o 3 arguments.\
-Per l'informació d'un volum prova: cargo run /info vol_name\
-Per buscar un fitxer prova: cargo run /find vol_name file_name.txt";
+pub(crate) const FILE_FOUND: &str = "Fitxer trobat! Ocupa ";
+
+pub(crate) const FILE_NOT_FOUND: &str = "Error. Fitxer no trobat.";
+
+
+// Program errors
+pub(crate) const ERROR_NUM_PARAMS_WRONG: &str = "Error. Nombre de paràmetres incorrecte";
+
+pub(crate) const ERROR_VOLUME_NOT_FOUND: &str = "Error. Volum no trobat.";
 
 pub(crate) const ERROR_OPTION_NOT_FOUND: &str = "Opcio no reconeguda! Opcions reconegudes són /info /find /delete";
 
-pub(crate) const ERROR_VOLUME_FORMAT_NOT_RECOGNIZED: &str = "Error. Volum no formatat en FAT16 ni EX2.";
+pub(crate) const ERROR_VOLUME_FORMAT_NOT_RECOGNIZED: &str = "Error. Volum no formatat en FAT16 ni EXT2.";
 
-pub(crate) const INFO_HEADER: &str = "------ Filesystem Information ------";
+pub(crate) const ERROR_FAT_12_FOUND: &str = "Filesystem must be FAT16. FAT12 found instead!";
+
+pub(crate) const ERROR_FAT_32_FOUND: &str = "Filesystem must be FAT16. FAT32 found instead!";
+
 
 pub struct GenericVolume {
     pub(crate) data: Vec<u8>,
-    pub(crate) file_name: Option<String>,
+    pub(crate) file_name: String,
 }
 
 impl GenericVolume {
-    pub(crate) fn new(volume_name: String, file_name: Option<String>) -> Self {
+    pub(crate) fn new(volume_name: String, file_name: String) -> Self {
         Self {
-            data: fs::read(format!("{}{}", RESOURCES_PATH, volume_name)).expect(format!("{}", ERROR_VOLUME_NOT_FOUND).as_str()),
+            // Verifiquem que el fitxer existeix...
+            data: {
+                let r = fs::read(format!("{}{}", RESOURCES_PATH, volume_name));
+                if r.is_err() {
+                    println!("{}", ERROR_VOLUME_NOT_FOUND);
+                    exit(-1)
+                }
+                r.unwrap()
+            },
             file_name,
         }
     }
@@ -58,7 +76,7 @@ pub(crate) trait Filesystem {
             "/info" => self.info(),
             "/find" => self.find(),
             "/delete" => self.delete(),
-            _ => print!("{}", ERROR_OPTION_NOT_FOUND),
+            _ => println!("{}", ERROR_OPTION_NOT_FOUND),
         }
     }
 

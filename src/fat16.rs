@@ -1,10 +1,14 @@
 use core::fmt;
+use std::process::exit;
 
 use crate::generics::*;
 use crate::utils::*;
 
+// TODO: Falta implementar comportament amb els fitxers ocults. Ex: .hi
+// TODO: Falta revisar perque apareix test2 com a filename quan no esta al sistema de fitxers... (./res/Fat16)
+
 pub(crate) struct FAT16 {
-    file_name: Option<String>,
+    file_name: String,
     bpb_byts_per_sec: u16,
     bpb_sec_per_clus: u8,
     num_rsvd_sec: u16,
@@ -18,7 +22,6 @@ pub(crate) struct FAT16 {
     first_data_sector: u32,
     data_sec: u32,
 }
-//TODO: QUE PASSA SI EL SIZE ES ZERO?
 
 enum FatType {
     FAT12,
@@ -37,6 +40,20 @@ impl fmt::Display for FatType {
 }
 
 impl FAT16 {
+    fn check_fat_type_is_fat16(&self) {
+        match self.get_fat_type() {
+            FatType::FAT12 => {
+                println!("{}", ERROR_FAT_12_FOUND);
+                exit(-1);
+            }
+            FatType::FAT16 => return,
+            FatType::FAT32 => {
+                println!("{}", ERROR_FAT_32_FOUND);
+                exit(-1);
+            }
+        }
+    }
+
     fn get_fat_type(&self) -> FatType {
         return match self.data_sec / self.bpb_sec_per_clus as u32 {
             count_of_clusters if count_of_clusters < 4085 => FatType::FAT12,
@@ -45,17 +62,9 @@ impl FAT16 {
         };
     }
 
-    fn get_sec(&self, n: u32) -> u32 {
-        let fat_offset = n * 2;
-
-        let fat_sec_num = self.num_rsvd_sec as u32 + (fat_offset / self.bpb_byts_per_sec as u32);
-        let fat_ent_offset = fat_offset % self.bpb_byts_per_sec as u32;
-        print!("Fat offset is {}", fat_ent_offset);
-        12
-    }
     // Cerca un directori per trobar query_filename. Al trobar una carpeta, torna a executar la cerca a l'interior.
     // Basicament és un DFS.
-    fn find_in_dir(&self, start: u32, end: u32, query_filename: &String) -> u32 {
+    fn find_in_dir(&self, start: u32, end: u32, query_filename: &String) -> Option<u32> {
         let mut i: u32 = start;
         while i < end || end == 0 {
             let directory = &self.data[i as usize..(i + 32) as usize];
@@ -72,19 +81,23 @@ impl FAT16 {
             }
 
             // Hem trobat un directori!
-            let nom = extract_string(directory, 0, 8);
-            let extension = extract_string(directory, 8, 3);
-            let filename = (nom.unwrap().replace(" ", "") + "." + extension.unwrap()).replace(" ", "").to_lowercase();
+            let nom = extract_string(directory, 0, 8).unwrap().replace(" ", "");
+            let extension = extract_string(directory, 8, 3).unwrap().replace(" ", "");
+
+            let filename = {
+                if extension == "" {
+                    nom.to_lowercase()
+                } else {
+                    format!("{}.{}", nom, extension).to_lowercase()
+                }
+            };
+
+            // println!("File name is {}", filename);
+
             let attr = directory[11];
 
             let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
             let file_size = extract_u32(directory, 28);
-
-            // TODO: Podria ser que el filename sigui el nom de la carpeta. I que no trobi el fitxer perque troba abans la carpeta?
-            // TODO: Hauria doncs de mirar si el tipo es fitxer apart del nom?
-            if *query_filename == filename {
-                return file_size;
-            }
 
             // Directori es un subdirectori! Podem buscar a l'interior. Sempre i quan no sigui . o ..
             if attr == 0x10 && directory[0] != 0x2e {
@@ -93,14 +106,16 @@ impl FAT16 {
                 let new_dir_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
 
                 let res = self.find_in_dir(new_dir_start, 0, query_filename);
-                if res != 0 {
+                if res.is_some() {
                     return res;
                 }
+            } else if *query_filename == filename {
+                return Some(file_size);
             }
             i += 32;
         }
 
-        return 0;
+        return None;
     }
 }
 
@@ -128,7 +143,7 @@ impl Filesystem for FAT16 {
         // Count of sectors in data region
         let data_sec: u32 = bpb_tot_sec - first_data_sector;
 
-        FAT16 {
+        let obj = FAT16 {
             file_name: gv.file_name,
             bpb_byts_per_sec,
             bpb_sec_per_clus: gv.data[13],
@@ -142,7 +157,9 @@ impl Filesystem for FAT16 {
             root_dir_sectors,
             first_data_sector,
             data_sec,
-        }
+        };
+        obj.check_fat_type_is_fat16();
+        obj
     }
 
     fn info(&self) {
@@ -169,26 +186,15 @@ Label: {}",
     }
 
     fn find(&self) {
-        if let None = self.file_name {
-            panic!("File name not specified!")
-        }
-
-        let query_filename = self.file_name.as_ref().unwrap();
-        match self.get_fat_type() {
-            FatType::FAT12 => panic!("Filesystem must be FAT16. FAT12 found instead!"),
-            FatType::FAT16 => (),
-            FatType::FAT32 => println!("Filesystem must be FAT16. FAT32 found instead!"),
-        }
-
         let first_root_dir_sec_num = self.num_rsvd_sec as u32 + (self.bpb_num_fats as u32 * self.bpb_fatsz16 as u32);
         let first_root_dir_start = first_root_dir_sec_num * self.bpb_byts_per_sec as u32;
         let first_root_dir_end = (self.root_dir_sectors as u32 * self.bpb_byts_per_sec as u32) + first_root_dir_start;
 
-        let size = self.find_in_dir(first_root_dir_start, first_root_dir_end, query_filename);
-        if size != 0 {
-            println!("Fitxer trobat! Ocupa {} bytes.", size);
+        let file_size = self.find_in_dir(first_root_dir_start, first_root_dir_end, &self.file_name);
+        if file_size.is_some() {
+            println!("{}{} bytes.", FILE_FOUND, file_size.unwrap());
         } else {
-            println!("Error. Fitxer no trobat.");
+            println!("{}", FILE_NOT_FOUND);
         }
     }
 
