@@ -18,6 +18,7 @@ pub(crate) struct FAT16 {
     first_data_sector: u32,
     data_sec: u32,
 }
+//TODO: QUE PASSA SI EL SIZE ES ZERO?
 
 enum FatType {
     FAT12,
@@ -79,6 +80,8 @@ impl FAT16 {
             let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
             let file_size = extract_u32(directory, 28);
 
+            // TODO: Podria ser que el filename sigui el nom de la carpeta. I que no trobi el fitxer perque troba abans la carpeta?
+            // TODO: Hauria doncs de mirar si el tipo es fitxer apart del nom?
             if *query_filename == filename {
                 return file_size;
             }

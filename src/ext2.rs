@@ -34,6 +34,113 @@ impl Ext2 {
         return 1024 + (block_number - 1) * self.block_size;
     }
 
+    // Cerca un fitxer de forma recursiva, retorna el Some(size). Si no troba. retorna None.
+    fn find_in_inode(&self, inode_nun: u32, filename: &String) -> Option<u32> {
+
+        let block_group_num = (inode_nun - 1) / self.inodes_x_group;
+
+        let block_group_offset = block_group_num * self.group_blocks_count * self.block_size;
+
+        // Proporciona el blockd e la taula d'inodes del primer block group.
+        let bg_inode_table = extract_u32(&self.data,(self.get_offset(1 + self.first_block + block_group_num * self.group_blocks_count) + 8) as usize);
+
+        let inode_nun = (inode_nun - 1) % self.inodes_x_group;
+
+        // Donat un inode_num proporciona el offset a la seva posició.
+        let offset = (block_group_offset + self.get_offset(bg_inode_table) + inode_nun * self.inode_size as u32) as usize;
+
+        let i_mode = extract_u16(&self.data,offset);
+        if  (i_mode & 0x4000) == 0x4000 {
+
+            // El inode_num correspon a un directori.
+            let max_i_blocks = extract_u32(&self.data, offset + 28) / (2 << extract_u32(&self.data, 1024 + 24));
+
+            assert!(max_i_blocks <= 15);
+
+            for i in 1..=max_i_blocks{
+                let data_block_num = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize);
+                let data_block_offset = data_block_num * self.block_size;
+                if i < 13 {
+                    // Direct blocks
+                    let file_size = self.find_in_dir(data_block_offset, filename);
+
+                    if file_size.is_some() {
+                        return file_size;
+                    }
+
+                }else if i == 13 {
+                    // Indirect block
+                    todo!()
+                }else if i == 14{
+                    // Double indirect block
+                    todo!()
+                }else {
+                    // Triple indirect block
+                    todo!()
+                }
+            }
+
+
+        }else{
+            let size = extract_u32(&self.data,offset + 4);
+            return Some(size);
+        }
+        None
+    }
+
+    // Analitza un directori que ocupa 1 sol bloc.
+    fn find_in_dir(&self, data_block_offset: u32, filename: &String) -> Option<u32> {
+        let mut i: usize = 0;
+        // Do while suuper apurat.
+        while {
+
+            let goal_inode = extract_u32(&self.data, data_block_offset as usize + i);
+
+            let name_len = &self.data[data_block_offset as usize + 6 + i];
+            let found_filename = extract_string(&self.data,data_block_offset as usize + 8 + i,*name_len as usize).unwrap();
+            let file_type = self.data[data_block_offset as usize + 7 + i];
+
+            let rec_len = extract_u16(&self.data, data_block_offset as usize + 4 + i);
+
+            // Si la entry no es fa servir + no hi ha seguent. Sortim de la recusio.
+            if goal_inode == 0 && rec_len == 0 {
+                return None
+            }
+
+            // Check filetype:
+            if file_type != 2 {
+                // Not a dir. Check filename!
+                if file_type != 0 {
+                    if filename == found_filename{
+                        let size = self.find_in_inode(goal_inode, filename);
+                        if size.is_some(){
+                            return size
+                        }
+                    }
+                }
+            }else{
+                // Is a directory. Recursive call.
+
+                //Evitem analitzar . i ..
+                if found_filename == "." || found_filename == ".." {
+                    // println!("Not analizing dir search because its me! Filename is {} Reclen is {}",found_filename,rec_len);
+                }else{
+                    // println!("Analizing a inode {} that is a dir!! Dirname is {} filetype is {}",goal_inode, found_filename,file_type);
+                    let size = self.find_in_inode(goal_inode, filename);
+                    if size.is_some() {
+                        return size;
+                    }
+                }
+            }
+
+            // Add the rec_len to the iterator
+            i += rec_len as usize;
+
+            //Condicio d'exit del doWhile apanyat. Si el rec_len + indeex actual > block_size, retornem
+            (extract_u16(&self.data, data_block_offset as usize + 4 + i) as usize + i) <= self.block_size as usize
+        } {}
+        None
+    }
 }
 
 impl Filesystem for Ext2 {
@@ -108,63 +215,13 @@ Ultima escriptura: {}", INFO_HEADER,
 
     fn find(&self) {
 
-        println!("Bloc size is {:?}", self.block_size);
+        // Iniciem la cerca per el inode Root.
+        let found_size = self.find_in_inode(2, self.file_name.as_ref().unwrap());
 
-
-        // Read group descriptors info:
-        let block_group_count = 1 + (self.block_count - 1) / self.group_blocks_count;
-
-        //Offset del primer bloc.
-        let gr_desc_start_off = self.get_offset(1 + self.first_block);
-
-        //Offset del final del block group description table
-        let gr_desc_end_off = gr_desc_start_off + block_group_count * 32;
-
-
-        // Inode table
-        let inodes_per_block = self.block_size / self.inode_size as u32;
-        let inode_blocks_per_group = self.inodes_x_group / inodes_per_block;
-
-        //TODO: S'indica que s'han de saltar les primeres 11 entries de la taula. Aixo que comporta? pag 17.
-        let mut inode_num = 1;//+ self.first_inode;
-        let bg_inode_table = extract_u32(&self.data,(gr_desc_start_off + 8) as usize);
-
-        while inode_num < self.inodes_x_group {
-            let in_table_start_off = (self.get_offset(bg_inode_table) + (inode_num - 1) * self.inode_size as u32) as usize;
-
-
-            let i_mode = extract_u16(&self.data,in_table_start_off);
-
-            // TODO: Preguntar que fer amb els inodes que donen 0...
-            let i_links_count = extract_u16(&self.data, in_table_start_off + 26);
-            if i_mode != 0 && i_links_count > 0 {
-
-                // TODO: Max_i_blocks dona 79... perque?
-                let max_i_blocks = extract_u32(&self.data, in_table_start_off + 28) / (2 << extract_u32(&self.data, 1024 + 24));
-
-                // Aixo 15 vegades. i_block_0 apunta a
-                let i_block_0 = extract_u32(&self.data, in_table_start_off + 40);
-                println!("Scanning inode num {:?}. Offset from start of the table is {:x}. Format is {:x} Its size is {:?} bytes. Its max_i_blocks is {:?}",inode_num, in_table_start_off, i_mode, extract_u32(&self.data,in_table_start_off + 4), max_i_blocks);
-
-                if (i_mode & 0x4000) == 0x4000 {
-                    println!("\tEl inode és un directori!");
-                    // Analitzem el directori:
-                    let add = (i_block_0 * self.block_size as u32)as usize;
-                    let inode = extract_u32(&self.data, add);
-                    let name_len = &self.data[add + 6];
-                    let rec_len = extract_u16(&self.data,add + 4);
-
-                    // TODO: He de buscar amb rec_len fins a trobar un dir amb EXT2_FT_UNKNOWN?
-
-                    let file_type = &self.data[add + 7];
-                    let file_name = extract_string(&self.data,add + 8,*name_len as usize);
-                    println!("\tDir data is: File name is {:?}. Name len is {:?}. Inode number is {:?}. FileType {:?}. Rec len is {:?}", file_name.unwrap(),name_len, inode, file_type,rec_len);
-                    println!("Next name is {:?}", extract_string(&self.data,(add + 8 + rec_len as usize) as usize,self.data[(add + rec_len as usize + 6)as usize] as usize).unwrap())
-                }else {
-                    //TODO: Ignoro els fitxers que no siguin dir?
-                }
-            }
-            inode_num += 1;
+        if found_size.is_some(){
+            println!("File found. Its size is {:?}", found_size.unwrap());
+        }else{
+            println!("File not found!");
         }
     }
     fn delete(&self) {
