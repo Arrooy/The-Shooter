@@ -1,5 +1,6 @@
 use crate::generics::*;
 use crate::utils::*;
+use std::borrow::Borrow;
 
 pub(crate) struct Ext2 {
     file_name: Option<String>,
@@ -26,6 +27,14 @@ pub(crate) struct Ext2 {
     last_write: u32,
 }
 
+impl Ext2 {
+
+    // Block number == 1 -> Superblock.
+    fn getOffset(&self, block_number: u32) -> u32 {
+        return 1024 + (block_number - 1) * self.block_size;
+    }
+
+}
 
 impl Filesystem for Ext2 {
     fn new(gv: GenericVolume) -> Self {
@@ -98,7 +107,50 @@ Ultima escriptura: {}", INFO_HEADER,
     }
 
     fn find(&self) {
-        todo!()
+
+        println!("Bloc size is {:?}", self.block_size);
+
+
+        // Read group descriptors info:
+        let block_group_count = 1 + (self.block_count - 1) / self.group_blocks_count;
+
+        //Offset del primer bloc.
+        let gr_desc_start_off = self.getOffset(1 + self.first_block);
+
+        //Offset del final del block group description table
+        let gr_desc_end_off = gr_desc_start_off + block_group_count * 32;
+
+
+        // Inode table
+        let inodes_per_block = self.block_size / self.inode_size as u32;
+        let inode_blocks_per_group = self.inodes_x_group / inodes_per_block;
+
+        let mut inode_num = 1 + self.first_inode;
+        let bg_inode_table = extract_u32(&self.data,(gr_desc_start_off + 8) as usize);
+
+        while inode_num < self.inodes_x_group {
+            let in_table_start_off = (self.getOffset(bg_inode_table) + (inode_num - 1) * self.inode_size as u32) as usize;
+            let i_mode = extract_u16(&self.data,in_table_start_off);
+
+            // TODO: Preguntar que fer amb els inodes que donen 0...
+            let i_links_count = extract_u16(&self.data, in_table_start_off + 26);
+            if i_mode != 0 && i_links_count > 0 {
+
+                let max_i_blocks = extract_u32(&self.data, in_table_start_off + 28) / (2 << extract_u32(&self.data, 1024 + 24));
+                if (i_mode & 0x4000) == 0x4000 {
+                    println!("El inode és un directori!");
+                }else {
+
+                }
+                // Aixo 15 vegades. i_block_0 apunta a
+                let i_block_0 = extract_u32(&self.data, in_table_start_off + 40);
+
+                println!("I block is {} - {}", i_block_0,i_block_1);
+                println!("Scanning inode.Start of the table is {:x}. Format is {:x} Its size is {:?}. Its i_blocks is {:?}",in_table_start_off, i_mode, extract_u32(&self.data,in_table_start_off + 4), max_i_blocks);
+
+            }
+            inode_num += 1;
+        }
     }
     fn delete(&self) {
         todo!()

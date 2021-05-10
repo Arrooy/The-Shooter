@@ -60,7 +60,7 @@ impl FAT16 {
             let directory = &self.data[i as usize..(i + 32) as usize];
 
             // No hi ha info en aquest bloc. Anem al seguent
-            if directory[0] == 0xE5 {
+            if directory[0] == 0xE5 || directory[11] == 15 {
                 i += 32;
                 continue;
             }
@@ -73,7 +73,7 @@ impl FAT16 {
             // Hem trobat un directori!
             let nom = extract_string(directory, 0, 8);
             let extension = extract_string(directory, 8, 3);
-            let filename = (nom.unwrap().replace(" ", "") + "." + extension.unwrap()).to_lowercase();
+            let filename = (nom.unwrap().replace(" ", "") + "." + extension.unwrap()).replace(" ", "").to_lowercase();
             let attr = directory[11];
 
             let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
@@ -94,7 +94,6 @@ impl FAT16 {
                     return res;
                 }
             }
-
             i += 32;
         }
 
