@@ -1,14 +1,12 @@
 use core::fmt;
 use std::process::exit;
-
+use std::fs;
 use crate::generics::*;
 use crate::utils::*;
 
-// TODO: Falta implementar comportament amb els fitxers ocults. Ex: .hi
-// TODO: Falta revisar perque apareix test2 com a filename quan no esta al sistema de fitxers... (./res/Fat16)
-
 pub(crate) struct FAT16 {
     file_name: String,
+    vol_name: String,
     bpb_byts_per_sec: u16,
     bpb_sec_per_clus: u8,
     num_rsvd_sec: u16,
@@ -92,18 +90,18 @@ impl FAT16 {
                 }
             };
 
-            // println!("File name is {}", filename);
-
             let attr = directory[11];
 
             let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
             let file_size = extract_u32(directory, 28);
 
+
             // Directori es un subdirectori! Podem buscar a l'interior. Sempre i quan no sigui . o ..
             if attr == 0x10 && directory[0] != 0x2e {
-                // println!("El directori era una carpeta. Entrant a l'interior de la carpeta {}", filename);
+
                 let first_sector_of_cluster = ((cluster_numbers - 2) as u32 * self.bpb_sec_per_clus as u32) + self.first_data_sector as u32;
                 let new_dir_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
+
 
                 let res = self.find_in_dir(new_dir_start, 0, query_filename);
                 if res.is_some() {
@@ -116,6 +114,60 @@ impl FAT16 {
         }
 
         return None;
+    }
+
+    // Delete a file in root dir.
+    fn delete_in_dir(&self, start: u32, end: u32, query_filename: &String) -> Vec<u8> {
+        let mut i: u32 = start;
+        while i < end || end == 0 {
+            let directory = &self.data[i as usize..(i + 32) as usize];
+
+            // No hi ha info en aquest bloc. Anem al seguent
+            if directory[0] == 0xE5 || directory[11] == 15 {
+                i += 32;
+                continue;
+            }
+
+            // No hi ha info en el bloc ni en en el seguents
+            if directory[0] == 0x00 {
+                break;
+            }
+
+            // Hem trobat un directori!
+            let nom = extract_string(directory, 0, 8).unwrap().replace(" ", "");
+            let extension = extract_string(directory, 8, 3).unwrap().replace(" ", "");
+
+            let filename = {
+                if extension == "" {
+                    nom.to_lowercase()
+                } else {
+                    format!("{}.{}", nom, extension).to_lowercase()
+                }
+            };
+
+            let attr = directory[11];
+            let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
+
+            let file_size = extract_u32(directory, 28);
+            // Directori es un subdirectori! Podem buscar a l'interior. Sempre i quan no sigui . o ..
+            if *query_filename == filename && !(attr == 0x10 && directory[0] != 0x2e){
+                let mut new_data = self.data.to_vec();
+
+                new_data[i as usize] = 0xE5;
+                // Si el fitxer és pler, invalidem el contingut
+                if file_size != 0 {
+                    let first_sector_of_cluster = ((cluster_numbers - 2) as u32 * self.bpb_sec_per_clus as u32) + self.first_data_sector as u32;
+                    let new_dir_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
+                    for k in new_dir_start as usize .. (new_dir_start + file_size) as usize {
+                        new_data[k] = 0;
+                    }
+                }
+                return new_data;
+            }
+            i += 32;
+        }
+
+        return vec![];
     }
 }
 
@@ -144,6 +196,7 @@ impl Filesystem for FAT16 {
         let data_sec: u32 = bpb_tot_sec - first_data_sector;
 
         let obj = FAT16 {
+            vol_name:gv.vol_name,
             file_name: gv.file_name,
             bpb_byts_per_sec,
             bpb_sec_per_clus: gv.data[13],
@@ -157,6 +210,7 @@ impl Filesystem for FAT16 {
             root_dir_sectors,
             first_data_sector,
             data_sec,
+
         };
         obj.check_fat_type_is_fat16();
         obj
@@ -199,6 +253,16 @@ Label: {}",
     }
 
     fn delete(&self) {
-        todo!()
+        let first_root_dir_sec_num = self.num_rsvd_sec as u32 + (self.bpb_num_fats as u32 * self.bpb_fatsz16 as u32);
+        let first_root_dir_start = first_root_dir_sec_num * self.bpb_byts_per_sec as u32;
+        let first_root_dir_end = (self.root_dir_sectors as u32 * self.bpb_byts_per_sec as u32) + first_root_dir_start;
+
+        let edited_file: Vec<u8> = self.delete_in_dir(first_root_dir_start, first_root_dir_end, &self.file_name);
+        if edited_file.len() != 0 {
+            fs::write(format!("{}{}", RESOURCES_PATH, self.vol_name), edited_file).expect("Unable to save new filesystem! Check program permissions!");
+            println!("{}{}{}", FILE_DELETED_1, self.file_name, FILE_DELETED_2);
+        } else {
+            println!("{}", FILE_NOT_FOUND);
+        }
     }
 }

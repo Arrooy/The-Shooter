@@ -1,9 +1,18 @@
 use crate::generics::*;
 use crate::utils::*;
 
+// Al fer delete, sha de tocar Block Group Descriptor Table?
+// En l'inode, que s'ha de fer? modificar la dtime? Modificar la mida?
+// S'han de tocar els blocs?
+
+// Eliminar el bit del bitmap dels inodes.
+// Eliminar lentrada del directory entry i linode.
+// Posant bits a zero.
+
 pub(crate) struct Ext2 {
     file_name: String,
     data: Vec<u8>,
+    vol_name: String,
 
     inode_size: u16,
     inode_count: u32,
@@ -140,6 +149,7 @@ impl Filesystem for Ext2 {
     fn new(gv: GenericVolume) -> Self {
         Ext2 {
             file_name: gv.file_name,
+            vol_name:gv.vol_name,
 
             inode_count: extract_u32(&gv.data, 1024),
             free_inodes: extract_u32(&gv.data, 1024 + 16),

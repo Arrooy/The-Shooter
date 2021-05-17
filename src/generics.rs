@@ -9,10 +9,15 @@ pub(crate) const INFO_HEADER: &str = "------ Filesystem Information ------";
 
 pub(crate) const FILE_FOUND: &str = "Fitxer trobat! Ocupa ";
 
-pub(crate) const FILE_NOT_FOUND: &str = "Error. Fitxer no trobat.";
+pub(crate) const FILE_DELETED_1: &str = "El fitxer ";
+
+pub(crate) const FILE_DELETED_2: &str = " ha estat eliminat.";
+
 
 
 // Program errors
+pub(crate) const FILE_NOT_FOUND: &str = "Error. Fitxer no trobat.";
+
 pub(crate) const ERROR_NUM_PARAMS_WRONG: &str = "Error. Nombre de paràmetres incorrecte";
 
 pub(crate) const ERROR_VOLUME_NOT_FOUND: &str = "Error. Volum no trobat.";
@@ -29,6 +34,8 @@ pub(crate) const ERROR_FAT_32_FOUND: &str = "Filesystem must be FAT16. FAT32 fou
 pub struct GenericVolume {
     pub(crate) data: Vec<u8>,
     pub(crate) file_name: String,
+    pub(crate) vol_name: String,
+
 }
 
 impl GenericVolume {
@@ -44,6 +51,7 @@ impl GenericVolume {
                 r.unwrap()
             },
             file_name,
+            vol_name: volume_name,
         }
     }
 
