@@ -1,5 +1,6 @@
 use crate::generics::*;
 use crate::utils::*;
+use std::cmp::{max, min};
 
 // Al fer delete, sha de tocar Block Group Descriptor Table?
 // En l'inode, que s'ha de fer? modificar la dtime? Modificar la mida?
@@ -36,55 +37,147 @@ pub(crate) struct Ext2 {
 }
 
 impl Ext2 {
-    // Block number == 1 -> Superblock.
     fn get_offset(&self, block_number: u32) -> u32 {
-        return 1024 + (block_number - 1) * self.block_size;
+        return if self.first_block == 1 {
+            // Block number == 1 -> Superblock.
+            1024 + (block_number - 1) * self.block_size
+        } else {
+            block_number * self.block_size
+        };
     }
+
+    // Cerca tots els blocks a linterior d'un block indirecte. Si troba el fitxer, retorna la mida.
+    // layer especifica la profunditat. Si és 0, estem tractant single-indirect block.
+    // Sino, cal endinsarse més.
+    fn explore_indirect_block(&self, indirect_block_offset: u32, filename: &String, max_loop: u32, layer: u32) -> Option<u32> {
+        let mut k = 0;
+        while {
+            println!("K is {}",k);
+            let block_number_inside_indirect_block = extract_u32(&self.data, (indirect_block_offset + 4 * k) as usize);
+
+            let mut data_valid = block_number_inside_indirect_block != 0;
+
+            if data_valid {
+                let data_block_offset = block_number_inside_indirect_block * self.block_size;
+
+                let file_size = {
+                    if layer == 0 {
+                        self.find_in_dir(data_block_offset, filename)
+                    }else{
+                        // Les seguents layers iterem per tots els valors!
+                        self.explore_indirect_block(data_block_offset, filename, 0, layer - 1)
+                    }
+                };
+
+                if file_size.is_some() {
+                    return file_size;
+                }
+            }
+            // Si maxloop es 0, iterem fins a trobar un valor 0 en les dades
+            // Sino, iterem fins a max_loop.
+            if max_loop != 0 && k >= max_loop{
+                data_valid = false;
+            }
+
+            k = k + 1;
+            data_valid
+        } {}
+        None
+    }
+
 
     // Cerca un fitxer de forma recursiva, retorna el Some(size). Si no troba. retorna None.
     fn find_in_inode(&self, inode_nun: u32, filename: &String) -> Option<u32> {
         let block_group_num = (inode_nun - 1) / self.inodes_x_group;
+        let inode_nun = (inode_nun - 1) % self.inodes_x_group;
 
         let block_group_offset = block_group_num * self.group_blocks_count * self.block_size;
 
-        // Proporciona el blockd e la taula d'inodes del primer block group.
+        // Proporciona el block de la taula d'inodes del primer block group.
         let bg_inode_table = extract_u32(&self.data, (self.get_offset(1 + self.first_block + block_group_num * self.group_blocks_count) + 8) as usize);
-
-        let inode_nun = (inode_nun - 1) % self.inodes_x_group;
 
         // Donat un inode_num proporciona el offset a la seva posició.
         let offset = (block_group_offset + self.get_offset(bg_inode_table) + inode_nun * self.inode_size as u32) as usize;
 
         let i_mode = extract_u16(&self.data, offset);
+        println!("El inode és {}",i_mode);
+        // El inode_num correspon a un directori.
         if (i_mode & 0x4000) == 0x4000 {
 
-            // El inode_num correspon a un directori.
             let max_i_blocks = extract_u32(&self.data, offset + 28) / (2 << extract_u32(&self.data, 1024 + 24));
 
-            assert!(max_i_blocks <= 15);
+            println!("Number of blocks: {}", max_i_blocks);
 
-            for i in 1..=max_i_blocks {
-                let data_block_num = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize);
-                let data_block_offset = data_block_num * self.block_size;
+            // Quantitat de rows dels blocs indirectes.
+            let indirect_block_row_count = self.block_size / 4;
+
+            let double_indirect_top_row = indirect_block_row_count - 12 + self.block_size * self.block_size;
+
+            let max_loop = {
+                if max_i_blocks < 13{
+                    max_i_blocks
+                }else if max_i_blocks >= 13 && max_i_blocks <= indirect_block_row_count - 12{
+                    13
+                }else if max_i_blocks > indirect_block_row_count - 12 && max_i_blocks <= double_indirect_top_row{
+                    14
+                }else{
+                    15
+                }
+            };
+
+            println!("Iterating with max loop _> {}",max_loop);
+
+            for i in 1..=max_loop {
+                println!("i is {}",i);
                 if i < 13 {
-                    // Direct blocks
+                    // Direct blocks: Els offsets son correctes, no fa falta fer gaire...
+                    let data_block_offset = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize) * self.block_size;
+
                     let file_size = self.find_in_dir(data_block_offset, filename);
 
                     if file_size.is_some() {
                         return file_size;
                     }
+
+
+
+
                 } else if i == 13 {
                     // Indirect block
-                    todo!()
-                } else if i == 14 {
+                    let indirect_block_offset = extract_u32(&self.data, offset + 40 + 4 * 12 as usize) * self.block_size;
+                    let indirect_max_loop = min(max_i_blocks, indirect_block_row_count - 12);
+
+                    let file_size = self.explore_indirect_block(indirect_block_offset, filename, indirect_max_loop, 0);
+
+                    if file_size.is_some() {
+                        return file_size;
+                    }
+                } else if i == 14{
                     // Double indirect block
-                    todo!()
+                    let double_indirect_block_offset = extract_u32(&self.data, offset + 40 + 4 * 13 as usize) * self.block_size;
+
+                    let double_indirect_max_loop = min(max_i_blocks, double_indirect_top_row);
+
+                    let file_size = self.explore_indirect_block(double_indirect_block_offset, filename, double_indirect_max_loop, 1);
+
+                    if file_size.is_some() {
+                        return file_size;
+                    }
+
                 } else {
+
                     // Triple indirect block
                     todo!()
                 }
             }
         } else {
+            println!("{} {} {} ", extract_u32(&self.data, offset + 28), extract_u32(&self.data, 1024 + 24), 2 << extract_u32(&self.data, 1024 + 24));
+            let max_i_blocks = extract_u32(&self.data, offset + 28) / (2 << extract_u32(&self.data, 1024 + 24));
+
+            println!("Number of blocks: {} Divided is {}", max_i_blocks, max_i_blocks / self.block_size);
+            assert!(max_i_blocks <= 15);
+
+            println!("File inode is {} Offset is dec:{} hex:{:x}", inode_nun, offset, offset);
             let size = extract_u32(&self.data, offset + 4);
             return Some(size);
         }
@@ -113,6 +206,7 @@ impl Ext2 {
             if file_type != 2 {
                 // Not a dir. Check filename!
                 if file_type != 0 {
+                     // println!("File found: {} Finding in inode...", found_filename);
                     if filename == found_filename {
                         let size = self.find_in_inode(goal_inode, filename);
                         if size.is_some() {
@@ -125,9 +219,9 @@ impl Ext2 {
 
                 //Evitem analitzar . i ..
                 if found_filename == "." || found_filename == ".." {
-                    // println!("Not analizing dir search because its me! Filename is {} Reclen is {}",found_filename,rec_len);
+                    println!("Not analizing dir search because its me! Filename is {} Reclen is {}", found_filename, rec_len);
                 } else {
-                    // println!("Analizing a inode {} that is a dir!! Dirname is {} filetype is {}",goal_inode, found_filename,file_type);
+                    println!("Analizing a inode {} that is a dir!! Dirname is {} filetype is {}", goal_inode, found_filename, file_type);
                     let size = self.find_in_inode(goal_inode, filename);
                     if size.is_some() {
                         return size;
@@ -149,7 +243,7 @@ impl Filesystem for Ext2 {
     fn new(gv: GenericVolume) -> Self {
         Ext2 {
             file_name: gv.file_name,
-            vol_name:gv.vol_name,
+            vol_name: gv.vol_name,
 
             inode_count: extract_u32(&gv.data, 1024),
             free_inodes: extract_u32(&gv.data, 1024 + 16),
