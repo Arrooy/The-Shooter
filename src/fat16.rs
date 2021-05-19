@@ -4,6 +4,8 @@ use std::fs;
 use crate::generics::*;
 use crate::utils::*;
 
+//TODO: Potser els fitxers (directoris) no ocupen un sol cluster. S'ha de emprar la FAT per a saber si hi han més dades!
+
 pub(crate) struct FAT16 {
     file_name: String,
     vol_name: String,
@@ -95,13 +97,11 @@ impl FAT16 {
             let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
             let file_size = extract_u32(directory, 28);
 
-
             // Directori es un subdirectori! Podem buscar a l'interior. Sempre i quan no sigui . o ..
             if attr == 0x10 && directory[0] != 0x2e {
 
                 let first_sector_of_cluster = ((cluster_numbers - 2) as u32 * self.bpb_sec_per_clus as u32) + self.first_data_sector as u32;
                 let new_dir_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
-
 
                 let res = self.find_in_dir(new_dir_start, 0, query_filename);
                 if res.is_some() {
@@ -181,6 +181,7 @@ impl Filesystem for FAT16 {
 
         // Calcul del nombre de sectors que ocupa el root directory.
         let root_dir_sectors = ((bpb_root_ent_cnt * 32) + (bpb_byts_per_sec - 1)) / bpb_byts_per_sec;
+
         // Start of data sector
         let first_data_sector = num_rsvd_sec as u32 + (bpb_num_fats as u32 * bpb_fatsz16 as u32) + root_dir_sectors as u32;
 
