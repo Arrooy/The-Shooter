@@ -4,23 +4,18 @@ use crate::generics::*;
 use crate::utils::*;
 use std::process::exit;
 use std::fs;
-
-// Al fer delete, sha de tocar Block Group Descriptor Table?
-// En l'inode, que s'ha de fer? modificar la dtime? Modificar la mida?
-// S'han de tocar els blocs?
-
-// Eliminar el bit del bitmap dels inodes.
-// Eliminar lentrada del directory entry i linode.
-// Posant bits a zero.
+use std::cell::{Cell, RefCell};
+use std::borrow::BorrowMut;
 
 pub(crate) struct Ext2 {
     file_name: String,
     data: Vec<u8>,
     vol_name: String,
 
+    used_blocks: RefCell<Vec<u32>>,
+
     indirect_block_row_count: u32,
     double_indirect_top_row: u32,
-
 
     inode_size: u16,
     inode_count: u32,
@@ -46,9 +41,12 @@ pub(crate) struct Ext2 {
 struct FindResult{
     file_size:u32,
     file_inode:usize,
+    parent_directory_offset:usize,
 }
 
 impl Ext2 {
+
+    // Retorna l'offset donat un numero de block
     fn get_offset(&self, block_number: usize) -> usize {
         return if self.first_block == 1 {
             // Block number == 1 -> Superblock.
@@ -89,7 +87,6 @@ impl Ext2 {
         return block_group_offset + self.get_offset(bg_inode_table);
     }
 
-
     // Donat un inode_num proporciona el offset a la seva posició a memoria desde l'inici del fs.
     fn compute_inode_offset(&self, global_inode_num: usize) -> usize {
         let relative_inode_num = (global_inode_num - 1) % self.inodes_x_group as usize;
@@ -98,12 +95,11 @@ impl Ext2 {
         return self.compute_inode_table_start_offset(global_inode_num) + relative_inode_num * self.inode_size as usize;
     }
 
-
     // Cerca tots els blocks a linterior d'un block indirecte. Si troba el fitxer, retorna la mida.
     // layer especifica la profunditat. Si és 0, estem tractant single-indirect block.
     // Sino, cal endinsarse més.
-    fn explore_indirect_block(&self, indirect_block_offset: u32, filename: &String, max_loop: u32, layer: u32, delete_directory_entry: bool) -> Option<FindResult> {
-        println!("Exploring indirect block: {} {:x} MaxLoop is {} and layer is {}", indirect_block_offset, indirect_block_offset, max_loop, layer);
+    fn explore_indirect_block(&self, indirect_block_offset: u32, filename: &String, max_loop: u32, layer: u32, parent_directory_offset: usize) -> Option<FindResult> {
+        //println!("Exploring indirect block: {} {:x} MaxLoop is {} and layer is {}", indirect_block_offset, indirect_block_offset, max_loop, layer);
         let mut k = 0;
         while {
             let block_number_inside_indirect_block = extract_u32(&self.data, (indirect_block_offset + 4 * k) as usize);
@@ -115,10 +111,10 @@ impl Ext2 {
 
                 let file_size = {
                     if layer == 0 {
-                        self.find_in_dir(data_block_offset, filename, delete_directory_entry)
+                        self.find_in_dir(data_block_offset, filename, parent_directory_offset)
                     } else {
                         // Les seguents layers iterem per tots els valors!
-                        self.explore_indirect_block(data_block_offset, filename, 0, layer - 1, delete_directory_entry)
+                        self.explore_indirect_block(data_block_offset, filename, 0, layer - 1, parent_directory_offset)
                     }
                 };
 
@@ -140,7 +136,7 @@ impl Ext2 {
 
     // Cerca un fitxer de forma recursiva, retorna el Some(FindResult). Si no troba. retorna None.
     // Find result conté mida de fitxer i inode d'aquest.
-    fn find_in_inode(&self, inode_num: usize, filename: &String, delete_directory_entry: bool) -> Option<FindResult> {
+    fn find_in_inode(&self, inode_num: usize, filename: &String, parent_directory_offset: usize) -> Option<FindResult> {
 
         // Donat un inode_num proporciona el offset a la seva posició.
         let offset = self.compute_inode_offset(inode_num);
@@ -158,9 +154,15 @@ impl Ext2 {
                 // println!("i is {}", i);
                 if i < 13 {
                     // Direct blocks: Els offsets son correctes, no fa falta fer gaire...
-                    let data_block_offset = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize) * self.block_size;
+                    let block_num = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize);
+                    let data_block_offset =  block_num * self.block_size;
 
-                    let file_size = self.find_in_dir(data_block_offset, filename, delete_directory_entry);
+                    // {
+                    //     let mut used_bocks = self.used_blocks.borrow_mut();
+                    //     used_bocks.push(block_num);
+                    // }
+
+                    let file_size = self.find_in_dir(data_block_offset, filename, parent_directory_offset);
 
                     if file_size.is_some() {
                         return file_size;
@@ -179,7 +181,7 @@ impl Ext2 {
                         }
                     };
 
-                    let file_size = self.explore_indirect_block(indirect_block_offset, filename, indirect_max_loop, i - 13, delete_directory_entry);
+                    let file_size = self.explore_indirect_block(indirect_block_offset, filename, indirect_max_loop, i - 13, parent_directory_offset);
 
                     if file_size.is_some() {
                         return file_size;
@@ -189,26 +191,33 @@ impl Ext2 {
         } else {
             // S'executa quan hem trobat el inode del fitxer.
             println!("File inode is {} Offset is dec: {} hex: {:x}", inode_num, offset, offset);
+
+
+
+
             return Some(FindResult {
                 file_size: extract_u32(&self.data, offset + 4),
                 file_inode: inode_num,
+                parent_directory_offset
             });
         }
         None
     }
 
     // Analitza un directori que ocupa 1 sol bloc.
-    fn find_in_dir(&self, data_block_offset: u32, filename: &String, delete_directory_entry: bool) -> Option<FindResult> {
+    fn find_in_dir(&self, data_block_offset: u32, filename: &String, parent_directory_offset: usize) -> Option<FindResult> {
         let mut i: usize = 0;
+        let mut last_rec = 0;
         // Do while suuper apurat.
         while {
-            let goal_inode = extract_u32(&self.data, data_block_offset as usize + i) as usize;
+            let offset = data_block_offset as usize + i;
+            let goal_inode = extract_u32(&self.data, offset) as usize;
 
-            let name_len = &self.data[data_block_offset as usize + 6 + i];
-            let found_filename = extract_string(&self.data, data_block_offset as usize + 8 + i, *name_len as usize).unwrap();
-            let file_type = self.data[data_block_offset as usize + 7 + i];
+            let name_len = &self.data[offset + 6];
+            let found_filename = extract_string(&self.data, offset + 8, *name_len as usize).unwrap();
+            let file_type = self.data[offset + 7];
 
-            let rec_len = extract_u16(&self.data, data_block_offset as usize + 4 + i);
+            let rec_len = extract_u16(&self.data, offset + 4);
 
             // Si la entry no es fa servir + no hi ha seguent. Sortim de la recusio.
             if goal_inode == 0 && rec_len == 0 {
@@ -220,8 +229,10 @@ impl Ext2 {
                 // Not a dir. Check filename!
                 if file_type != 0 {
                     if filename == found_filename {
-                        // println!("File found: {} Finding in inode {}", found_filename, goal_inode);
-                        let size = self.find_in_inode(goal_inode, filename, delete_directory_entry);
+
+                        // Busquem la mida del fitxer.
+                        // Aportem info sobre l'offset de la carpeta actual, el item de sobre al que coincideix el nom.
+                        let size = self.find_in_inode(goal_inode, filename, offset - last_rec);
                         if size.is_some() {
                             return size;
                         }
@@ -235,7 +246,7 @@ impl Ext2 {
                     // println!("Not analizing dir search because its me! Filename is {} Reclen is {}", found_filename, rec_len);
                 } else {
                     // println!("Analizing a inode {} that is a dir!! Dirname is {} filetype is {}", goal_inode, found_filename, file_type);
-                    let size = self.find_in_inode(goal_inode, filename, delete_directory_entry);
+                    let size = self.find_in_inode(goal_inode, filename, parent_directory_offset);
                     if size.is_some() {
                         return size;
                     }
@@ -245,15 +256,28 @@ impl Ext2 {
             // Add the rec_len to the iterator
             i += rec_len as usize;
 
+            last_rec = rec_len as usize;
+
             //Condicio d'exit del doWhile apanyat. Si el rec_len + indeex actual > block_size, retornem
-            (extract_u16(&self.data, data_block_offset as usize + 4 + i) as usize + i) <= self.block_size as usize
+            (extract_u16(&self.data, offset + 4) as usize + i) <= self.block_size as usize
         } {}
         None
     }
 
-    //http://manpages.ubuntu.com/manpages/precise/man8/e2undel.8.html apartat NOTES.
-    fn delete_inode(&self, file_inode: usize) -> Vec<u8> {
+    // Apartat NOTES de http://manpages.ubuntu.com/manpages/precise/man8/e2undel.8.html
+    // pd_offset = parent_directory_offset -> equival al offset del directory entry anterior en la carpeta.
+    fn delete_inode(&self, file_inode: usize, pd_offset: usize) -> Vec<u8> {
         let mut new_data = self.data.to_vec();
+
+        // ---- Eliminar directory entry ----
+
+        // Posem el rec_len del anterior apuntant al seguent
+        let rc_len_actual =  extract_u16(&self.data, pd_offset + 4);
+        let mida_dir_entry_a_borrar = extract_u16(&self.data, pd_offset + rc_len_actual as usize + 4);
+        save_u16(&mut new_data,pd_offset + 4,rc_len_actual + mida_dir_entry_a_borrar);
+
+        // Posem el dir entry a borrar amb inode id = 0. (not used)
+        save_u32(&mut new_data,pd_offset + mida_dir_entry_a_borrar as usize, 0);
 
         // ---- Alliberar els nodes dels bitmaps ----
 
@@ -269,6 +293,9 @@ impl Ext2 {
 
         // Restem 2 block a la localitzacio de la taula per arribar al block bitmap.
         let data_block_bitmap_offset = inode_table_start_offset - 2 * self.block_size as usize;
+        //TODO: Borrar els bits del bitmap!
+        let mut used_blocks = self.used_blocks.borrow_mut();
+        println!("Used blocks are {:?}",used_blocks);
 
 
         // ---- Modificar delete time "d_time" ----
@@ -296,6 +323,7 @@ impl Filesystem for Ext2 {
             file_name: gv.file_name,
             vol_name: gv.vol_name,
 
+            used_blocks: RefCell::new(vec![]),
             indirect_block_row_count,
             double_indirect_top_row: indirect_block_row_count - 12 + block_size * block_size,
 
@@ -367,7 +395,7 @@ Ultima escriptura: {}", INFO_HEADER,
     fn find(&self) {
 
         // Iniciem la cerca per el inode Root.
-        let found_result = self.find_in_inode(2, &self.file_name, false);
+        let found_result = self.find_in_inode(2, &self.file_name, 0);
 
         if found_result.is_some() {
             println!("{}{} bytes.", FILE_FOUND, found_result.unwrap().file_size);
@@ -380,11 +408,13 @@ Ultima escriptura: {}", INFO_HEADER,
         // TODO: Fer que find_in_inode rebi una clousure indicant que ha de tetornar. La clousure reb
         // Iniciem la cerca per el inode Root.
 
-        let found_result = self.find_in_inode(2, &self.file_name, true);
+        let found_result = self.find_in_inode(2, &self.file_name, 0);
 
         if found_result.is_some() {
+            let result = found_result.unwrap();
+
             // Hem trobat el inode! Borrem!
-            let edited_file: Vec<u8> =self.delete_inode(found_result.unwrap().file_inode);
+            let edited_file: Vec<u8> =self.delete_inode(result.file_inode, result.parent_directory_offset);
             if edited_file.len() != 0 {
                 fs::write(format!("{}{}", RESOURCES_PATH, self.vol_name), edited_file).expect("Unable to save new filesystem! Check program permissions!");
                 println!("{}{}{}", FILE_DELETED_1, self.file_name, FILE_DELETED_2);
