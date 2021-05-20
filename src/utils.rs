@@ -54,7 +54,7 @@ pub(crate) fn save_u16(data: &mut [u8], base: usize, new_data: u16) {
     data[base + 1] = ((new_data >> 8) & 0xff) as u8;
 }
 
-pub(crate) fn set_bit(data: &mut [u8], base: usize, bit_number: u8){
+pub(crate) fn clear_bit(data: &mut [u8], base: usize, bit_number: u8){
     data[base] = data[base] & !(1 << bit_number);
 }
 

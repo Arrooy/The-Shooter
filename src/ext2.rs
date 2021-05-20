@@ -95,6 +95,17 @@ impl Ext2 {
         return self.compute_inode_table_start_offset(global_inode_num) + relative_inode_num * self.inode_size as usize;
     }
 
+    fn compute_indirect_max_loop(&self, i: u32, max_i_blocks: u32) -> u32{
+        return if i == 13 {
+            min(max_i_blocks, self.indirect_block_row_count - 12)
+        } else if i == 14 {
+            min(max_i_blocks, self.double_indirect_top_row)
+        } else {
+            // Iterem a muerte fins trobar una entrada amb valor 0.
+            0
+        }
+    }
+
     // Cerca tots els blocks a linterior d'un block indirecte. Si troba el fitxer, retorna la mida.
     // layer especifica la profunditat. Si és 0, estem tractant single-indirect block.
     // Sino, cal endinsarse més.
@@ -151,16 +162,11 @@ impl Ext2 {
             let max_loop = self.compute_max_index(max_i_blocks);
 
             for i in 1..=max_loop {
-                // println!("i is {}", i);
+
                 if i < 13 {
                     // Direct blocks: Els offsets son correctes, no fa falta fer gaire...
                     let block_num = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize);
                     let data_block_offset =  block_num * self.block_size;
-
-                    // {
-                    //     let mut used_bocks = self.used_blocks.borrow_mut();
-                    //     used_bocks.push(block_num);
-                    // }
 
                     let file_size = self.find_in_dir(data_block_offset, filename, parent_directory_offset);
 
@@ -170,16 +176,7 @@ impl Ext2 {
                 } else {
                     // Pot ser simple - double o triple indirect.
                     let indirect_block_offset = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize) * self.block_size;
-                    let indirect_max_loop = {
-                        if i == 13 {
-                            min(max_i_blocks, self.indirect_block_row_count - 12)
-                        } else if i == 14 {
-                            min(max_i_blocks, self.double_indirect_top_row)
-                        } else {
-                            // Iterem a muerte fins trobar una entrada amb valor 0.
-                            0
-                        }
-                    };
+                    let indirect_max_loop = self.compute_indirect_max_loop(i, max_i_blocks);
 
                     let file_size = self.explore_indirect_block(indirect_block_offset, filename, indirect_max_loop, i - 13, parent_directory_offset);
 
@@ -191,9 +188,6 @@ impl Ext2 {
         } else {
             // S'executa quan hem trobat el inode del fitxer.
             println!("File inode is {} Offset is dec: {} hex: {:x}", inode_num, offset, offset);
-
-
-
 
             return Some(FindResult {
                 file_size: extract_u32(&self.data, offset + 4),
@@ -282,21 +276,26 @@ impl Ext2 {
         // ---- Alliberar els nodes dels bitmaps ----
 
         // Computem la posicio de la taula d'inodes del inode a borrar.
-        let inode_table_start_offset = self.compute_inode_table_start_offset(file_inode);
+        let inode_table_start_offset: usize= self.compute_inode_table_start_offset(file_inode);
 
         // Restem 1 block a la localitzacio de la taula per arribar al inode bitmap.
         let inode_bitmap_offset = inode_table_start_offset - 1 * self.block_size as usize;
         let relative_inode_num = (file_inode - 1) % self.inodes_x_group as usize;
         let bitmap_byte_num = inode_bitmap_offset + relative_inode_num / 8;
 
-        set_bit(&mut new_data,  bitmap_byte_num,(relative_inode_num % 8) as u8);
+        clear_bit(&mut new_data,  bitmap_byte_num,(relative_inode_num % 8) as u8);
 
         // Restem 2 block a la localitzacio de la taula per arribar al block bitmap.
         let data_block_bitmap_offset = inode_table_start_offset - 2 * self.block_size as usize;
-        //TODO: Borrar els bits del bitmap!
-        let mut used_blocks = self.used_blocks.borrow_mut();
-        println!("Used blocks are {:?}",used_blocks);
 
+        // Crea una llista dels blocks emprats i la guarda a self.used_blocks.
+        self.search_for_inode_used_blocks(file_inode);
+        let mut used_blocks = self.used_blocks.borrow_mut();
+
+        for block in used_blocks.iter() {
+            let bitmap_byte_num = data_block_bitmap_offset + *block as usize / 8;
+            clear_bit(&mut new_data,  bitmap_byte_num,(*block as usize % 8) as u8);
+        }
 
         // ---- Modificar delete time "d_time" ----
 
@@ -307,9 +306,84 @@ impl Ext2 {
         let time = current_time();
         save_u32(&mut new_data, offset + 20, time);
 
+        // ---- Posem alguns camps d'interes a valors de delete. Sino, el sistema no detecta la deletion fins el seguent mount!----
+        // Fora links.
+        save_u16(&mut new_data, offset + 26, 0);
+
+        // Iblocks a zero
+        save_u32(&mut new_data, offset + 28, 0);
+
+        // Size a zero
+        save_u32(&mut new_data, offset + 4, 0);
         // Retornem les dades modificades.
-        return vec![];
+        return new_data;
     }
+
+    fn search_for_inode_used_blocks(&self, inode_num: usize){
+
+        // Donat un inode_num proporciona el offset a la seva posició.
+        let offset = self.compute_inode_offset(inode_num);
+
+        let max_i_blocks = extract_u32(&self.data, offset + 28) / (2 << extract_u32(&self.data, 1024 + 24));
+
+        // Computa quin es l'index màxim del array.
+        let max_loop = self.compute_max_index(max_i_blocks);
+
+        for i in 1..=max_loop {
+
+            if i < 13 {
+                // Direct blocks: Els offsets son correctes, no fa falta fer gaire...
+                let block_num = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize);
+
+                {
+                    let mut used_bocks = self.used_blocks.borrow_mut();
+                    used_bocks.push(block_num);
+                }
+
+            } else {
+                // Pot ser simple - double o triple indirect.
+                let indirect_block_offset = extract_u32(&self.data, offset + 40 + 4 * (i - 1) as usize) * self.block_size;
+                let indirect_max_loop = self.compute_indirect_max_loop(i, max_i_blocks);
+                self.search_for_inode_blocks_inside_indirects(indirect_block_offset, indirect_max_loop, i - 13);
+            }
+        }
+    }
+
+    fn search_for_inode_blocks_inside_indirects(&self, indirect_block_offset: u32, max_loop: u32, layer: u32) {
+        let mut k = 0;
+        while {
+            let block_number_inside_indirect_block = extract_u32(&self.data, (indirect_block_offset + 4 * k) as usize);
+
+            let mut data_valid = block_number_inside_indirect_block != 0;
+
+            if data_valid {
+                let data_block_offset = block_number_inside_indirect_block * self.block_size;
+
+                if layer == 0 {
+                    // Hem trobat ultim nivell, afegim data.
+                    {
+                        let mut used_bocks = self.used_blocks.borrow_mut();
+                        used_bocks.push(block_number_inside_indirect_block);
+                    }
+
+                } else {
+                    // Les seguents layers iterem per tots els valors!
+                    self.search_for_inode_blocks_inside_indirects(data_block_offset, 0, layer - 1);
+                }
+
+            }
+            // Si maxloop es 0, iterem fins a trobar un valor 0 en les dades
+            // Sino, iterem fins a max_loop.
+            if max_loop != 0 && k >= max_loop {
+                data_valid = false;
+            }
+
+            k = k + 1;
+            data_valid
+        } {}
+    }
+
+
 }
 
 impl Filesystem for Ext2 {
