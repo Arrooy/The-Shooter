@@ -306,7 +306,7 @@ impl Ext2 {
         let time = current_time();
         save_u32(&mut new_data, offset + 20, time);
 
-        // ---- Posem alguns camps d'interes a valors de delete. Sino, el sistema no detecta la deletion fins el seguent mount!----
+        // ---- Posem alguns camps d'interes a valors de delete ----
         // Fora links.
         save_u16(&mut new_data, offset + 26, 0);
 
@@ -315,10 +315,12 @@ impl Ext2 {
 
         // Size a zero
         save_u32(&mut new_data, offset + 4, 0);
+
         // Retornem les dades modificades.
         return new_data;
     }
 
+    // Donat un inode, retorna els blocks emprats
     fn search_for_inode_used_blocks(&self, inode_num: usize){
 
         // Donat un inode_num proporciona el offset a la seva posició.
@@ -349,6 +351,7 @@ impl Ext2 {
         }
     }
 
+    // Troba els blocks emprats per un inode a l'interior dels blocks indirectes.
     fn search_for_inode_blocks_inside_indirects(&self, indirect_block_offset: u32, max_loop: u32, layer: u32) {
         let mut k = 0;
         while {
@@ -382,8 +385,6 @@ impl Ext2 {
             data_valid
         } {}
     }
-
-
 }
 
 impl Filesystem for Ext2 {
@@ -479,16 +480,15 @@ Ultima escriptura: {}", INFO_HEADER,
     }
     fn delete(&self) {
 
-        // TODO: Fer que find_in_inode rebi una clousure indicant que ha de tetornar. La clousure reb
-        // Iniciem la cerca per el inode Root.
-
+        // Iniciem la cerca per el inode Root. Trobem el inode del fitxer.
         let found_result = self.find_in_inode(2, &self.file_name, 0);
 
         if found_result.is_some() {
             let result = found_result.unwrap();
 
-            // Hem trobat el inode! Borrem!
+            // Borrem l'inode!
             let edited_file: Vec<u8> =self.delete_inode(result.file_inode, result.parent_directory_offset);
+
             if edited_file.len() != 0 {
                 fs::write(format!("{}{}", RESOURCES_PATH, self.vol_name), edited_file).expect("Unable to save new filesystem! Check program permissions!");
                 println!("{}{}{}", FILE_DELETED_1, self.file_name, FILE_DELETED_2);
