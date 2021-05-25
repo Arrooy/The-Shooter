@@ -3,8 +3,7 @@ use std::process::exit;
 use std::fs;
 use crate::generics::*;
 use crate::utils::*;
-
-//TODO: Potser els fitxers (directoris) no ocupen un sol cluster. S'ha de emprar la FAT per a saber si hi han més dades!
+use std::cmp::min;
 
 pub(crate) struct FAT16 {
     file_name: String,
@@ -66,7 +65,7 @@ impl FAT16 {
     // Basicament és un DFS.
     fn find_in_dir(&self, start: u32, end: u32, query_filename: &String) -> Option<u32> {
         let mut i: u32 = start;
-        while i < end || end == 0 {
+        while i < end {
             let directory = &self.data[i as usize..(i + 32) as usize];
 
             // No hi ha info en aquest bloc. Anem al seguent
@@ -94,22 +93,36 @@ impl FAT16 {
 
             let attr = directory[11];
 
-            let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
+            let mut cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
             let file_size = extract_u32(directory, 28);
 
             // Directori es un subdirectori! Podem buscar a l'interior. Sempre i quan no sigui . o ..
             if attr == 0x10 && directory[0] != 0x2e {
 
-                let first_sector_of_cluster = ((cluster_numbers - 2) as u32 * self.bpb_sec_per_clus as u32) + self.first_data_sector as u32;
-                let new_dir_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
+                // Iterem per tots els clusters del directori trobat.
+                while{
+                    let first_sector_of_cluster = ((cluster_numbers - 2) as u32 * self.bpb_sec_per_clus as u32) + self.first_data_sector as u32;
+                    let new_dir_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
+                    let new_dir_end = new_dir_start + (self.bpb_sec_per_clus as u16 * self.bpb_byts_per_sec) as u32;
 
-                let res = self.find_in_dir(new_dir_start, 0, query_filename);
-                if res.is_some() {
-                    return res;
-                }
+                    // Explorem el seguent cluster
+                    let res = self.find_in_dir(new_dir_start, new_dir_end, query_filename);
+                    if res.is_some() {
+                        return res;
+                    }
+
+                    // Mirem el seguent cluster number de la fat.
+                    cluster_numbers = extract_u16(&self.data, ((self.num_rsvd_sec * self.bpb_byts_per_sec) as u32 + (cluster_numbers as u32 * 2)) as usize);
+
+                    // Si no hi han mes dades, sortim del loop.
+                    cluster_numbers < 0xFFF7
+                }{};
+
+                // Aqui s'ha de mirar que no hi hagin més clusters a buscar.
             } else if *query_filename == filename {
                 return Some(file_size);
             }
+
             i += 32;
         }
 
@@ -119,7 +132,7 @@ impl FAT16 {
     // Delete a file in root dir.
     fn delete_in_dir(&self, start: u32, end: u32, query_filename: &String) -> Vec<u8> {
         let mut i: u32 = start;
-        while i < end || end == 0 {
+        while i < end{
             let directory = &self.data[i as usize..(i + 32) as usize];
 
             // No hi ha info en aquest bloc. Anem al seguent
@@ -146,22 +159,48 @@ impl FAT16 {
             };
 
             let attr = directory[11];
-            let cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
+            let mut cluster_numbers = (directory[27] as u16) << 8 | (directory[26] as u16);
 
             let file_size = extract_u32(directory, 28);
-            // Directori es un subdirectori! Podem buscar a l'interior. Sempre i quan no sigui . o ..
+
+            // Hem trobat el fitxer en el root. Si no es carpeta, el borrem.
             if *query_filename == filename && !(attr == 0x10 && directory[0] != 0x2e){
                 let mut new_data = self.data.to_vec();
 
+                // Posem e5 en la directory entry.
                 new_data[i as usize] = 0xE5;
+
+                save_u16(&mut new_data, (i + 26) as usize, 0);
+                save_u32(&mut new_data, (i + 28) as usize, 0);
+
                 // Si el fitxer és pler, invalidem el contingut
                 if file_size != 0 {
-                    let first_sector_of_cluster = ((cluster_numbers - 2) as u32 * self.bpb_sec_per_clus as u32) + self.first_data_sector as u32;
-                    let new_dir_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
-                    for k in new_dir_start as usize .. (new_dir_start + file_size) as usize {
-                        new_data[k] = 0;
-                    }
+
+                    // Iterem per tots els clusters del directori trobat.
+                    while{
+                        let first_sector_of_cluster = ((cluster_numbers - 2) as u32 * self.bpb_sec_per_clus as u32) + self.first_data_sector as u32;
+                        let file_start = first_sector_of_cluster * self.bpb_byts_per_sec as u32;
+                        let file_end = file_start + min(file_size, (self.bpb_sec_per_clus as u16 * self.bpb_byts_per_sec) as u32);
+
+                        // Borra les dades a zero
+                        for k in file_start as usize .. (file_end) as usize {
+                            new_data[k] = 0;
+                        }
+
+                        // Mirem el seguent cluster number de la fat.
+                        let old_fat_pos = ((self.num_rsvd_sec * self.bpb_byts_per_sec) as u32 + (cluster_numbers as u32 * 2)) as usize;
+                        cluster_numbers = extract_u16(&self.data, old_fat_pos);
+
+
+                        // Borra el registre del FAT actual i dels backups.
+                        for r in 0..self.bpb_num_fats {
+                            save_u16(&mut new_data, old_fat_pos + r as usize * (self.bpb_fatsz16 as usize * self.bpb_byts_per_sec as usize), 0);
+                        }
+                        // Si no hi han mes dades, sortim del loop.
+                        cluster_numbers < 0xFFF7
+                    }{};
                 }
+
                 return new_data;
             }
             i += 32;
@@ -259,6 +298,7 @@ Label: {}",
         let first_root_dir_end = (self.root_dir_sectors as u32 * self.bpb_byts_per_sec as u32) + first_root_dir_start;
 
         let edited_file: Vec<u8> = self.delete_in_dir(first_root_dir_start, first_root_dir_end, &self.file_name);
+
         if edited_file.len() != 0 {
             fs::write(format!("{}{}", RESOURCES_PATH, self.vol_name), edited_file).expect("Unable to save new filesystem! Check program permissions!");
             println!("{}{}{}", FILE_DELETED_1, self.file_name, FILE_DELETED_2);
