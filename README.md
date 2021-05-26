@@ -71,7 +71,7 @@ The nature of a filesystem is to provide format (structure) to the hard disk dat
 
 This filesystem has 3 subtypes but this project only supports the 16-byte version. FAT16 has the following inner structure:
 
-<img src="https://raw.githubusercontent.com/Arrooy/The-Shooter/master/img/Fat16_struct.jpg?token=AFT43F6YHGP5LJD5NXHBEJLAW44LW" style="background: white; display: block; margin:auto;" alt="FAT Filesystem Structure">
+<img src="img/Fat16_struct.jpg" style="background: white; display: block; margin:auto;" alt="FAT Filesystem Structure">
 
 As seen in the image, the filesystem is logically divided into 4 regions. 
 These are the reserved region (first region), the FAT region (red and green in the diagram), the root directory region,
