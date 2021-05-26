@@ -71,7 +71,7 @@ The nature of a filesystem is to provide format (structure) to the hard disk dat
 
 This filesystem has 3 subtypes but this project only supports the 16-byte version. FAT16 has the following inner structure:
 
-<img src="https://github.com/Arrooy/The-Shooter/blob/master/img/FAT16_struct.jpg" style="background: white; display: block; margin:auto;" alt="FAT Filesystem Structure">
+<img src="img/Fat16_struct.jpg" style="background: white; display: block; margin:auto;" alt="FAT Filesystem Structure">
 
 As seen in the image, the filesystem is logically divided into 4 regions. 
 These are the reserved region (first region), the FAT region (red and green in the diagram), the root directory region,
@@ -92,7 +92,7 @@ Finally, the last region contains every file cluster provided by each root direc
 ### EXT2
 The Extended Filesystem 2 (EXT2) is a filesystem released in 1993 as part of the Linux Kernel. The filesystem has the following structure:
 
-<img src="https://www.oreilly.com/library/view/understanding-the-linux/0596005652/httpatomoreillycomsourceoreillyimages9320.png" style="background: white; display: block; margin:auto;" alt="EXT2 Structure">
+<img src="img/Inode_struct.png" style="background: white; display: block; margin:auto;" alt="EXT2 Structure">
 
 This time, the formatted volume has 2 main regions. The boot block and the group blocks. Inside each block group, there are several blocks of formatted data. A block is a small group of sectors on the disk. Differing from the FAT filesystem, the EXT2 parameters are located within the superblock inside the block group.
 
