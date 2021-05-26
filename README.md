@@ -3,10 +3,8 @@ The shooter is a project made to learn about FAT and Ext2 filesystems.
 
 It is written in [Rust](https://www.rust-lang.org/). :sparkling_heart:
 
-This was created for the Advanced Operating Systems (ASO) final project. 
-
-## Summary
-
+This was created for the Advanced Operating Systems (ASO) final project.
+## Summary - How to run the program
 This project supports basic operations
 with both filesystems. The available operations are: 
 * **Info**: Retrieves all the available filesystem information
@@ -14,26 +12,29 @@ with both filesystems. The available operations are:
 * **Delete**: Deletes a file from the root directory of a filesystem.
 
 It's command-line based software. To execute the previous features, use the following commands in the project root folder:
+
+Print to terminal filesystem information
 ```
 cargo run /info FAT16
 cargo run /info Ext2
 ```
+Look for hello.txt filesize
 ```
 cargo run /find FAT16 hello.txt
 cargo run /find Ext2 hello.txt
 ```
+Erase hello.txt from the filesystem
 ```
 cargo run /delete FAT16 hello.txt
 cargo run /delete Ext2 hello.txt
 ```
-The first argument specifies the filesystem. The second one is the filename.
+In the above commands, the first argument specifies the filesystem. The second arg (if defined) specifies the filename.
 ***
 ## Table of contents:
 * [How to Compile the project](#how-to-compile-the-project)
-    + [Linux Kernel](#linux-kernel)
     + [How to install rust](#how-to-install-rust)
     + [Requirements to execute](#requirements-to-execute)
-    + [How to run the program](#how-to-run-the-program)
+    + [Linux Kernel](#linux-kernel)
 * [Filesystem explanation](#filesystem-explanation)
     + [FAT](#fat)
     + [EXT2](#ext2)
@@ -49,8 +50,6 @@ The first argument specifies the filesystem. The second one is the filename.
 ***
 ## How to Compile the project 
 The software uses [Rust](https://www.rust-lang.org/) language. Please follow these instructions to install the required toolchain.
-### Linux Kernel
-Kernel used is `Linux 5.8.0-50-generic #56~20.04.1-Ubuntu x86_64 GNU/Linux`
 ### How to install RUST
 Run `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` to install RUST.
 
@@ -59,23 +58,8 @@ More info [here](https://www.rust-lang.org/tools/install)
 - Rust toolchain installed:
     - (rustc 1.51.0 (2fd73fabe 2021-03-23))
     - (cargo 1.51.0 (43b129a20 2021-03-16))
-    
-### How to run the program
-1. Inside the root project folder, run:
-
-    Print info of a FAT16 filesystem:
-    ```
-    cargo run /info FAT16
-    ```
-    Print info of an Ext2 filesystem:
-    ```
-    cargo run /info Ext2
-    ```
-    Print info of an unknown filesystem:
-    ```
-    cargo run /info non_def
-    ```
-   Same for /delete and /find commands.
+### Linux Kernel
+Kernel used is `Linux 5.8.0-50-generic #56~20.04.1-Ubuntu x86_64 GNU/Linux`
 ***
 ## Filesystem explanation
 As mentioned before, this project manages Ext2 and FAT. In this section, let's revise how these filesystems are 
@@ -87,7 +71,7 @@ The nature of a filesystem is to provide format (structure) to the hard disk dat
 
 This filesystem has 3 subtypes but this project only supports the 16-byte version. FAT16 has the following inner structure:
 
-![FAT Filesystem Structure](https://github.com/Arrooy/The-Shooter/blob/master/img/FAT16_struct.jpg "FAT Filesystem Structure")
+<img src="https://github.com/Arrooy/The-Shooter/blob/master/img/FAT16_struct.jpg" style="background: white; display: block; margin:auto;" alt="FAT Filesystem Structure">
 
 As seen in the image, the filesystem is logically divided into 4 regions. 
 These are the reserved region (first region), the FAT region (red and green in the diagram), the root directory region,
@@ -108,7 +92,7 @@ Finally, the last region contains every file cluster provided by each root direc
 ### EXT2
 The Extended Filesystem 2 (EXT2) is a filesystem released in 1993 as part of the Linux Kernel. The filesystem has the following structure:
 
-![Extended Filesystem 2 Structure](https://www.oreilly.com/library/view/understanding-the-linux/0596005652/httpatomoreillycomsourceoreillyimages9320.png "EXT2 Structure")
+<img src="https://www.oreilly.com/library/view/understanding-the-linux/0596005652/httpatomoreillycomsourceoreillyimages9320.png" style="background: white; display: block; margin:auto;" alt="EXT2 Structure">
 
 This time, the formatted volume has 2 main regions. The boot block and the group blocks. Inside each block group, there are several blocks of formatted data. A block is a small group of sectors on the disk. Differing from the FAT filesystem, the EXT2 parameters are located within the superblock inside the block group.
 
@@ -197,11 +181,9 @@ Apart from Filesystem problems, I also encountered typical errors when learning 
 
 What does the community see RUST learning curve?
 
-![RUST Learning curve](
-https://i.pinimg.com/originals/79/74/bb/7974bb8d1ab953614bea074d01926ef2.jpg "RUST Learning curve")
+<img src="https://i.pinimg.com/originals/79/74/bb/7974bb8d1ab953614bea074d01926ef2.jpg" style="background: white; display: block; margin:auto;" alt="RUST Learning curve">
 
-
-### Temporal estimation
+### Time investment
 The project used 15 days of work. This is ~83 hours approx.
 * Fase 1: 
     * Project setup + RUST learning (I read this [book](https://dhghomon.github.io/easy_rust/)): 20h
